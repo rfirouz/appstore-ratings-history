@@ -76,10 +76,15 @@ GitHub encrypts the key's secrets and never writes them to the repository.
 
 1. In [App Store Connect](https://appstoreconnect.apple.com), go to **Users and Access → Integrations → App Store Connect API → Team Keys** and generate a key. Pick the **Admin** role: Apple only lets Admin keys start the downloads report.
 2. Download the `.p8` file (Apple only lets you do this once) and note the **Key ID** and the **Issuer ID** shown on that page.
-3. In your repository, go to **Settings → Secrets and variables → Actions → Secrets** and add:
-   - `ASC_KEY_ID`: the Key ID
-   - `ASC_ISSUER_ID`: the Issuer ID
-   - `ASC_PRIVATE_KEY`: open the `.p8` file in a text editor and paste all of it, including the `BEGIN` and `END` lines
+3. In your repository, go to **Settings → Secrets and variables → Actions**. Stay on the **Secrets** tab and, under **Repository secrets**, click **New repository secret**. Add these three, one at a time. The names must match exactly:
+
+   | Name | Value | Where to find it |
+   | --- | --- | --- |
+   | `ASC_KEY_ID` | The Key ID, 10 characters like `2X9R4HXF34` | The **Key ID** column next to your key in App Store Connect. It's also in the file name: `AuthKey_2X9R4HXF34.p8` |
+   | `ASC_ISSUER_ID` | The Issuer ID, like `57246542-96fe-1a63-e053-0824d011072a` | Above the list of keys in App Store Connect |
+   | `ASC_PRIVATE_KEY` | Everything in the `.p8` file, including the `-----BEGIN PRIVATE KEY-----` and `-----END PRIVATE KEY-----` lines | Open the file in a text editor and copy all of it. On a Mac, `pbcopy < AuthKey_2X9R4HXF34.p8` copies it for you |
+
+   Once saved, GitHub shows only the names, never the values. To change one, click it and enter the new value.
 4. Run **Snapshot ratings** again. Written reviews arrive on this run. The downloads report starts now, and Apple usually delivers the first days within 48 hours.
 
 ## How the numbers are worked out
