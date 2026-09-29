@@ -1,0 +1,7 @@
+node_modules/
+dist/
+demo-data/
+.env
+*.p8
+.DS_Store
+*.tgz

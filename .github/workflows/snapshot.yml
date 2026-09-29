@@ -1,0 +1,53 @@
+name: Snapshot ratings
+
+on:
+  schedule:
+    # 00:37 UTC every day. The snapshot counts as the end of the previous day.
+    - cron: "37 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    if: vars.APP_IDS != '' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Take snapshot
+        run: node src/cli.ts collect
+        env:
+          APP_IDS: ${{ vars.APP_IDS }}
+          COUNTRIES: ${{ vars.COUNTRIES }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Save snapshot to the repository
+        if: ${{ !cancelled() }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          if [ -d data ]; then git add data; fi
+          if git diff --cached --quiet; then
+            echo "Nothing new to save."
+            exit 0
+          fi
+          git commit --quiet -m "Ratings snapshot $(date -u +%F)"
+          for attempt in 1 2 3; do
+            git pull --rebase --quiet && git push --quiet && exit 0
+            sleep 10
+          done
+          exit 1

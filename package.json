@@ -1,0 +1,40 @@
+{
+  "name": "appstore-ratings-history",
+  "version": "0.1.0",
+  "description": "Daily App Store ratings history for your apps, collected by a free GitHub Actions job and viewed in a local dashboard.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "bin": {
+    "appstore-ratings-history": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "dashboard",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "collect": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/cli.ts collect",
+    "dashboard": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/cli.ts dashboard",
+    "demo": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/demo.ts",
+    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test \"test/**/*.test.ts\"",
+    "check": "tsc -p tsconfig.json && tsc -p dashboard/tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "app-store",
+    "ratings",
+    "reviews",
+    "ios",
+    "github-actions",
+    "analytics"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "typescript": "^7.0.2"
+  }
+}

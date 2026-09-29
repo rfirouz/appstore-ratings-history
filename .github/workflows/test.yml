@@ -1,0 +1,23 @@
+name: Test
+
+on:
+  push:
+    paths: ["src/**", "dashboard/**", "test/**", "package*.json", "tsconfig*.json"]
+  pull_request:
+
+jobs:
+  test:
+    # Only in the original template repository, so copies don't spend minutes on it.
+    if: github.event.repository.is_template
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
