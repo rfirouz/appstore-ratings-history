@@ -93,9 +93,9 @@ GitHub encrypts the key's secrets and never writes them to the repository.
 - **New ratings** are the change in each country's count since the previous snapshot, added up.
 - **Average of new ratings** is the change in total stars (average × count) divided by the new ratings. With only a few new ratings it jumps around, and the tooltips say how many ratings it's based on.
 - **Which day.** A snapshot taken before noon UTC counts as the end of the previous day. A manual run in the afternoon counts as "today so far", and the nightly run replaces it.
-- **Missed days** show as grey stripes. Their ratings are included in the next snapshot, and the tooltip says so.
+- **Missed days** show as grey stripes. The ratings that show up at the next snapshot are spread evenly across the gap, so one day doesn't get them all. The tooltip says the number is an estimate.
 - **Resets.** If a country's count drops to half or less, you reset the rating summary with a release. That day counts the ratings since the reset. Smaller drops are ratings Apple removed, and count as zero new ratings.
-- **Countries that fail** (Apple sometimes refuses a request) keep their last known total and are checked again the next night.
+- **Countries that fail** (Apple sometimes refuses a request) keep their last known total and are checked again the next night. When the check works again, that country's new ratings are spread evenly across the days it missed. This stops a catch-up from looking like a release-day spike. Tooltips name the estimated countries, and the Updates table notes when a before or after window includes estimates.
 - **Lag.** Apple's own numbers can lag by a few hours, so a day can include a few ratings from the day before. Over a week this evens out.
 - **Ratings vs. reviews.** Most people rate without writing anything, so written reviews are a small share of new ratings.
 
@@ -130,7 +130,7 @@ It's a plain Node.js script, so it runs anywhere. Put your settings in a `.env` 
 ## Troubleshooting
 
 - **The run was late.** GitHub sometimes delays scheduled jobs by up to an hour or so when it's busy. The snapshot still counts for the right day unless it's more than 11 hours late.
-- **Some countries failed.** Apple limits how often its lookup API can be called. Those countries keep their last total and are checked again the next night.
+- **Some countries failed.** Apple limits how often its lookup API can be called. Those countries keep their last total and are checked again the next night. Their new ratings are then spread across the missed days and marked as estimates.
 - **Scheduled runs stopped.** GitHub pauses schedules in public repositories after 60 days without activity. The nightly commit keeps the repository active, but if you get an email from GitHub about it, re-enable the workflow in the Actions tab.
 - **"App was not found in any country".** Check that `APP_IDS` holds the number from your app's link and that the app is live.
 

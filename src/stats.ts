@@ -1,4 +1,4 @@
-import { daySpan, daysBetween } from "./days.ts";
+import { daySpan, daysBetween, shiftDays } from "./days.ts";
 import { countryName } from "./storefronts.ts";
 import type { CountrySummary, DayPoint, DownloadRow, RatingRow, ReviewRow, RunRow } from "./types.ts";
 
@@ -72,6 +72,19 @@ export function countryDeltas(rows: RatingRow[]): CountryDelta[] {
   return deltas;
 }
 
+/**
+ * Splits a change that spans several days evenly across them, oldest first.
+ * Leftover ratings go to the latest days, so the parts add up to the change.
+ */
+export function spreadDelta(delta: CountryDelta): { day: string; newRatings: number }[] {
+  const base = Math.floor(delta.newRatings / delta.covers);
+  const extra = delta.newRatings - base * delta.covers;
+  return Array.from({ length: delta.covers }, (_, index) => ({
+    day: shiftDays(delta.day, index - delta.covers + 1),
+    newRatings: base + (index >= delta.covers - extra ? 1 : 0),
+  }));
+}
+
 export type SeriesInput = {
   ratings: RatingRow[];
   runs: RunRow[];
@@ -90,8 +103,23 @@ export function dailySeries(input: SeriesInput): DayPoint[] {
   const days = daySpan(ordered[0]!, ordered.at(-1)!);
 
   const rowsByDay = groupBy(ratings, (row) => row.day);
-  const deltasByDay = groupBy(countryDeltas(ratings), (delta) => delta.day);
+  const deltas = countryDeltas(ratings);
+  const deltasByDay = groupBy(deltas, (delta) => delta.day);
   const lastRunByDay = new Map(input.runs.map((run) => [run.day, run]));
+
+  // A change that spans several days is shared out across them, so a country's
+  // catch-up after a failed check or a missed snapshot doesn't land on one day.
+  type Share = { country: string; newRatings: number; newAverage: number | null; spread: boolean; failedCheck: boolean };
+  const sharesByDay = new Map<string, Share[]>();
+  for (const delta of deltas) {
+    const parts = spreadDelta(delta);
+    const failedCheck = parts.slice(0, -1).some((part) => snapshotDays.has(part.day));
+    for (const part of parts) {
+      const list = sharesByDay.get(part.day) ?? [];
+      list.push({ country: delta.country, newRatings: part.newRatings, newAverage: delta.newAverage, spread: delta.covers > 1, failedCheck });
+      sharesByDay.set(part.day, list);
+    }
+  }
 
   const downloadDays = new Set((input.downloads ?? []).map((row) => row.day));
   const downloads = new Map<string, { firstTime: number; institutional: number }>();
@@ -120,9 +148,10 @@ export function dailySeries(input: SeriesInput): DayPoint[] {
     const snapshot = snapshotDays.has(day);
     const current = [...known.values()];
 
-    const deltas = deltasByDay.get(day) ?? [];
-    const counted = deltas.filter((delta) => delta.newAverage != null && delta.newRatings > 0);
-    const sample = counted.reduce((sum, delta) => sum + delta.newRatings, 0);
+    const ending = deltasByDay.get(day) ?? [];
+    const shares = sharesByDay.get(day) ?? [];
+    const counted = shares.filter((share) => share.newAverage != null && share.newRatings > 0);
+    const sample = counted.reduce((sum, share) => sum + share.newRatings, 0);
 
     const seen = new Set(today.map((row) => row.country));
     const failed = (lastRunByDay.get(day)?.failed ?? []).filter(
@@ -136,14 +165,15 @@ export function dailySeries(input: SeriesInput): DayPoint[] {
       day,
       ratings: snapshot && current.length ? current.reduce((sum, row) => sum + row.ratings, 0) : null,
       average: snapshot ? weightedAverage(current) : null,
-      newRatings: deltas.length ? deltas.reduce((sum, delta) => sum + delta.newRatings, 0) : null,
-      newAverage: sample ? counted.reduce((sum, delta) => sum + (delta.newAverage ?? 0) * delta.newRatings, 0) / sample : null,
+      newRatings: shares.length ? shares.reduce((sum, share) => sum + share.newRatings, 0) : null,
+      newAverage: sample ? counted.reduce((sum, share) => sum + (share.newAverage ?? 0) * share.newRatings, 0) / sample : null,
       newAverageSample: sample,
-      covers: deltas.reduce((most, delta) => Math.max(most, delta.covers), deltas.length ? 1 : 0),
+      estimated: shares.filter((share) => share.failedCheck).map((share) => share.country),
+      missedShare: shares.some((share) => share.spread && !share.failedCheck),
       snapshot,
       failed,
-      resets: deltas.filter((delta) => delta.reset).map((delta) => delta.country),
-      removed: deltas.reduce((sum, delta) => sum + delta.removed, 0),
+      resets: ending.filter((delta) => delta.reset).map((delta) => delta.country),
+      removed: ending.reduce((sum, delta) => sum + delta.removed, 0),
       downloads: download ? download.firstTime : null,
       institutional: download ? download.institutional : null,
       reviews: review?.count ?? 0,
@@ -162,14 +192,16 @@ export function countrySummaries(rows: RatingRow[], from: string, to: string): C
   }
   const added = new Map<string, { count: number; stars: number; sample: number }>();
   for (const delta of countryDeltas(rows)) {
-    if (delta.day < from || delta.day > to) continue;
-    const total = added.get(delta.country) ?? { count: 0, stars: 0, sample: 0 };
-    total.count += delta.newRatings;
-    if (delta.newAverage != null) {
-      total.stars += delta.newAverage * delta.newRatings;
-      total.sample += delta.newRatings;
+    for (const part of spreadDelta(delta)) {
+      if (part.day < from || part.day > to) continue;
+      const total = added.get(delta.country) ?? { count: 0, stars: 0, sample: 0 };
+      total.count += part.newRatings;
+      if (delta.newAverage != null) {
+        total.stars += delta.newAverage * part.newRatings;
+        total.sample += part.newRatings;
+      }
+      added.set(delta.country, total);
     }
-    added.set(delta.country, total);
   }
   return [...latest.values()]
     .map((row) => {

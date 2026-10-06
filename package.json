@@ -1,6 +1,6 @@
 {
   "name": "appstore-ratings-history",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Daily App Store ratings history for your apps, collected by a free GitHub Actions job and viewed in a local dashboard.",
   "license": "MIT",
   "type": "module",

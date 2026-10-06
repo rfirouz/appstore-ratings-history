@@ -44,6 +44,7 @@ const RELEASES = [
   { day: 385, version: "3.2.0", lift: 3.0, stars: 0.35, notes: "Fixes sign-in. Cursive for left-handed writers." },
 ];
 const MISSED = new Set([96, 97, 212]);
+const FAILED = new Map([[300, ["jp"]], [329, ["jp", "br"]]]);
 
 rmSync(DIR, { recursive: true, force: true });
 const files = openApp(DIR, ID);
@@ -77,8 +78,9 @@ for (let index = 0; index < DAYS; index++) {
     }
   }
   if (MISSED.has(index)) continue;
-  files.writeRatings(day, index === 300 ? rows.filter((row) => row.country !== "jp") : rows);
-  files.appendRun({ day, capturedAt: `${shiftDays(day, 1)}T00:41:00.000Z`, checked: 175, listed: COUNTRIES.length, failed: index === 300 ? ["jp"] : [] });
+  const failed = FAILED.get(index) ?? [];
+  files.writeRatings(day, rows.filter((row) => !failed.includes(row.country)));
+  files.appendRun({ day, capturedAt: `${shiftDays(day, 1)}T00:41:00.000Z`, checked: 175, listed: COUNTRIES.length - failed.length, failed });
 }
 files.writeVersions(RELEASES.map((item) => ({ version: item.version, released: shiftDays(START, item.day), firstSeen: shiftDays(START, item.day), notes: item.notes })));
 files.writeDownloads(downloads.filter((row) => row.day <= shiftDays(END, -2)));

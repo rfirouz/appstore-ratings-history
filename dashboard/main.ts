@@ -30,7 +30,8 @@ type Row = {
   ratings: number | null;
   average: number | null;
   missing: number;
-  catchUp: number;
+  missedShare: number;
+  estimated: string[];
   resets: string[];
   removed: number;
   failed: string[];
@@ -137,7 +138,7 @@ function rollup(days: DayPoint[], bucket: Bucket, from: string, lastDay: string)
     const sample = withAverage.reduce((sum, day) => sum + day.newAverageSample, 0);
     const last = [...list].reverse().find((day) => day.ratings != null);
     const downloadDays = list.filter((day) => day.downloads != null);
-    const paired = list.filter((day) => day.newRatings != null && day.downloads != null && day.covers === 1);
+    const paired = list.filter((day) => day.newRatings != null && day.downloads != null);
     const pairedDownloads = paired.reduce((sum, day) => sum + (day.downloads ?? 0), 0);
     return {
       day: start,
@@ -150,7 +151,8 @@ function rollup(days: DayPoint[], bucket: Bucket, from: string, lastDay: string)
       ratings: last?.ratings ?? null,
       average: last?.average ?? null,
       missing: list.filter((day) => !day.snapshot).length,
-      catchUp: list.filter((day) => day.covers > 1).length,
+      missedShare: list.filter((day) => day.snapshot && day.missedShare).length,
+      estimated: [...new Set(list.flatMap((day) => day.estimated))],
       resets: [...new Set(list.flatMap((day) => day.resets))],
       removed: list.reduce((sum, day) => sum + day.removed, 0),
       failed: [...new Set(list.flatMap((day) => day.failed))],
@@ -163,7 +165,7 @@ function rollup(days: DayPoint[], bucket: Bucket, from: string, lastDay: string)
   });
   if (bucket === "day") {
     rows.forEach((row, index) => {
-      const window = days.slice(Math.max(0, index - 6), index + 1).filter((day) => day.newRatings != null && day.downloads != null && day.covers === 1);
+      const window = days.slice(Math.max(0, index - 6), index + 1).filter((day) => day.newRatings != null && day.downloads != null);
       const downloads = window.reduce((sum, day) => sum + (day.downloads ?? 0), 0);
       row.conversion = downloads ? window.reduce((sum, day) => sum + (day.newRatings ?? 0), 0) / downloads : null;
     });
@@ -171,21 +173,46 @@ function rollup(days: DayPoint[], bucket: Bucket, from: string, lastDay: string)
   return rows;
 }
 
-type Totals = { newRatings: number; coveredDays: number; average: number | null; sample: number; conversion: number | null };
+type Totals = {
+  newRatings: number;
+  coveredDays: number;
+  average: number | null;
+  sample: number;
+  conversion: number | null;
+  missed: number;
+  estimated: string[];
+};
 
 function totals(days: DayPoint[]): Totals {
   const known = days.filter((day) => day.newRatings != null);
   const withAverage = days.filter((day) => day.newAverage != null && day.newAverageSample > 0);
   const sample = withAverage.reduce((sum, day) => sum + day.newAverageSample, 0);
-  const paired = days.filter((day) => day.newRatings != null && day.downloads != null && day.covers === 1);
+  const paired = days.filter((day) => day.newRatings != null && day.downloads != null);
   const pairedDownloads = paired.reduce((sum, day) => sum + (day.downloads ?? 0), 0);
   return {
     newRatings: known.reduce((sum, day) => sum + (day.newRatings ?? 0), 0),
-    coveredDays: known.reduce((sum, day) => sum + day.covers, 0),
+    coveredDays: known.length,
     average: sample ? withAverage.reduce((sum, day) => sum + (day.newAverage ?? 0) * day.newAverageSample, 0) / sample : null,
     sample,
     conversion: pairedDownloads ? paired.reduce((sum, day) => sum + (day.newRatings ?? 0), 0) / pairedDownloads : null,
+    missed: known.filter((day) => !day.snapshot).length,
+    estimated: [...new Set(known.flatMap((day) => day.estimated))],
   };
+}
+
+const countryCodes = (codes: string[], limit = 4): string =>
+  codes.length > limit
+    ? `${codes.slice(0, limit).map((code) => code.toUpperCase()).join(", ")} and ${codes.length - limit} more`
+    : codes.map((code) => code.toUpperCase()).join(", ");
+
+function estimateNote(windows: Totals[]): string | null {
+  const missed = windows.reduce((sum, window) => sum + window.missed, 0);
+  const estimated = [...new Set(windows.flatMap((window) => window.estimated))];
+  const reasons = [
+    missed ? plural(missed, "missed snapshot") : null,
+    estimated.length ? `failed checks in ${countryCodes(estimated)}` : null,
+  ].filter(Boolean);
+  return reasons.length ? `Includes estimates for ${reasons.join(" and ")}` : null;
 }
 
 function markersFor(data: AppPayload): ChartMarker[] {
@@ -359,12 +386,28 @@ function render(data: AppPayload, countries: CountrySummary[], reviews: ReviewRo
     const notes: string[] = [];
     if (row.partial) notes.push(`Only ${plural(row.length, "day")} of this ${period} are in view.`);
     if (bucket !== "day" && row.newRatings != null && row.length > 1) notes.push(`${formatNumber(row.newRatings / row.length)} new ratings per day`);
-    if (bucket === "day" && row.missing) notes.push("No snapshot for this day. The next snapshot includes its ratings.");
-    if (bucket !== "day" && row.missing) notes.push(`No snapshot on ${plural(row.missing, "day")}.`);
-    if (row.catchUp) notes.push(bucket === "day" ? "Includes ratings from the missed day(s) before." : `${plural(row.catchUp, "day")} include ratings from missed days.`);
-    if (row.resets.length) notes.push(`Rating summary reset in ${row.resets.map((code) => code.toUpperCase()).join(", ")}; counted the ratings since the reset.`);
+    if (bucket === "day" && row.missing) {
+      notes.push(
+        row.newRatings == null
+          ? "No snapshot for this day. The next snapshot will fill it in."
+          : "No snapshot for this day. Its new ratings are an estimate: the next snapshot's ratings are spread evenly across the gap.",
+      );
+    }
+    if (bucket !== "day" && row.missing) notes.push(`No snapshot on ${plural(row.missing, "day")}; their new ratings are estimated.`);
+    if (row.missedShare) {
+      notes.push(
+        bucket === "day"
+          ? "Part of these ratings is an estimate: the ratings since the last snapshot are spread evenly across the missed days."
+          : `${plural(row.missedShare, "day")} share ratings with missed snapshots.`,
+      );
+    }
+    if (row.estimated.length) notes.push(`Estimated for ${countryCodes(row.estimated)}: ratings after a failed check are spread evenly across the days it missed.`);
+    if (row.resets.length) notes.push(`Rating summary reset in ${countryCodes(row.resets, Infinity)}; counted the ratings since the reset.`);
     if (row.removed) notes.push(`${plural(row.removed, "rating")} disappeared (usually removed by Apple).`);
-    if (row.failed.length) notes.push(`Couldn't check: ${row.failed.map((code) => code.toUpperCase()).join(", ")}.`);
+    if (row.failed.length) {
+      const pending = row.failed.some((code) => !row.estimated.includes(code));
+      notes.push(`Couldn't check: ${countryCodes(row.failed, Infinity)}.${pending ? " Filled in after the next successful check." : ""}`);
+    }
     return notes;
   };
 
@@ -440,7 +483,7 @@ function render(data: AppPayload, countries: CountrySummary[], reviews: ReviewRo
       chartCard(
         "Download → rating",
         bucket === "day"
-          ? "New ratings ÷ first-time downloads over the last 7 days. Days that include missed snapshots are left out."
+          ? "New ratings ÷ first-time downloads over the last 7 days."
           : `New ratings ÷ first-time downloads each ${period}.`,
         {
           ...base,
@@ -480,10 +523,17 @@ function updatesCard(data: AppPayload, markers: ChartMarker[]): HTMLElement {
       const after = windowStats(marker.date, shiftDays(marker.date, UPDATE_WINDOW - 1));
       const rate = (value: Totals) => (value.coveredDays ? value.newRatings / value.coveredDays : null);
       const collecting = after.coveredDays < UPDATE_WINDOW;
+      const estimate = estimateNote([before, after]);
       return h(
         "tr",
         {},
-        h("td", {}, h("strong", {}, marker.label), h("div", { class: "muted small" }, shortDate(marker.date))),
+        h(
+          "td",
+          {},
+          h("strong", {}, marker.label),
+          h("div", { class: "muted small" }, shortDate(marker.date)),
+          estimate ? h("div", { class: "muted small" }, estimate) : null,
+        ),
         h("td", { class: "num" }, formatNumber(rate(before))),
         h("td", { class: "num" }, formatNumber(rate(after)), collecting ? h("div", { class: "muted small" }, `${after.coveredDays} of ${UPDATE_WINDOW} days so far`) : null),
         h("td", { class: "num" }, formatStars(before.average)),
@@ -588,7 +638,7 @@ function footer(): HTMLElement {
   return h(
     "footer",
     { class: "footer" },
-    h("p", {}, "New ratings are the day-to-day change in the rating count Apple shows in each country. Their average comes from the change in total stars, so days with only a few ratings are rough. Grey stripes are days without a snapshot; their ratings land on the next snapshot."),
+    h("p", {}, "New ratings are the day-to-day change in the rating count Apple shows in each country. Their average comes from the change in total stars, so days with only a few ratings are rough. When a snapshot is missed or a country can't be checked, the ratings that show up at the next check are spread evenly across the days in between. Grey stripes mark days without a snapshot, and tooltips say which numbers are estimates."),
     h("p", {}, "Hover a chart for details, drag across it to zoom, double-click to zoom out, and click a legend entry to hide it."),
   );
 }

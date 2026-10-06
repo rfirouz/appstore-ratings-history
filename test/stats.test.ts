@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { countryDeltas, countrySummaries, dailySeries, impliedAverage } from "../src/stats.ts";
+import { countryDeltas, countrySummaries, dailySeries, impliedAverage, spreadDelta } from "../src/stats.ts";
 import type { RatingRow, RunRow } from "../src/types.ts";
 
 const row = (day: string, country: string, ratings: number, average: number | null): RatingRow => ({ day, country, ratings, average });
@@ -44,14 +44,55 @@ test("daily series adds countries, marks missed days and carries totals through 
   assert.equal(first!.newRatings, null);
   assert.equal(first!.ratings, 150);
   assert.equal(second!.newRatings, 5);
-  assert.equal(second!.covers, 1);
+  assert.equal(second!.missedShare, false);
   assert.equal(missed!.snapshot, false);
-  assert.equal(missed!.newRatings, null);
+  assert.equal(missed!.newRatings, 3, "the 6 new US ratings are shared with the missed day");
   assert.equal(missed!.ratings, null);
-  assert.equal(fourth!.newRatings, 6);
-  assert.equal(fourth!.covers, 2);
+  assert.equal(fourth!.newRatings, 3);
+  assert.equal(fourth!.missedShare, true);
+  assert.deepEqual(fourth!.estimated, []);
   assert.deepEqual(fourth!.failed, ["de"]);
   assert.equal(fourth!.ratings, 161, "Germany keeps its last known count");
+});
+
+test("a change spanning several days is split evenly, with leftovers on the latest days", () => {
+  const [delta] = countryDeltas([row("2026-01-01", "jp", 200, 4), row("2026-01-04", "jp", 211, 4)]);
+  assert.deepEqual(spreadDelta(delta!), [
+    { day: "2026-01-02", newRatings: 3 },
+    { day: "2026-01-03", newRatings: 4 },
+    { day: "2026-01-04", newRatings: 4 },
+  ]);
+});
+
+test("a failed check is estimated across the days it missed, so a release doesn't get the catch-up", () => {
+  const ratings = [
+    row("2026-01-01", "us", 100, 4.5),
+    row("2026-01-02", "us", 101, 4.5),
+    row("2026-01-03", "us", 102, 4.5),
+    row("2026-01-01", "jp", 200, 4),
+    // jp failed on 2026-01-02; a release went live on 2026-01-03
+    row("2026-01-03", "jp", 211, 4),
+  ];
+  const days = dailySeries({ ratings, runs: [run("2026-01-01"), run("2026-01-02", ["jp"]), run("2026-01-03")] });
+  const [, failedDay, release] = days;
+  assert.equal(failedDay!.newRatings, 6, "1 from the US plus Japan's share of 5");
+  assert.deepEqual(failedDay!.estimated, ["jp"]);
+  assert.deepEqual(failedDay!.failed, ["jp"]);
+  assert.equal(failedDay!.missedShare, false);
+  assert.equal(release!.newRatings, 7, "1 from the US plus Japan's share of 6, not all 11");
+  assert.deepEqual(release!.estimated, ["jp"]);
+  assert.ok(Math.abs(release!.newAverage! - (4.5 * 1 + 4 * 6) / 7) < 1e-9, "Japan's share keeps its average");
+
+  const [jp] = countrySummaries(ratings, "2026-01-03", "2026-01-03");
+  assert.deepEqual([jp!.code, jp!.newRatings], ["jp", 6]);
+});
+
+test("a country that failed on the latest run has no share yet", () => {
+  const ratings = [row("2026-01-01", "jp", 200, 4), row("2026-01-01", "us", 100, 4.5), row("2026-01-02", "us", 102, 4.5)];
+  const [, last] = dailySeries({ ratings, runs: [run("2026-01-01"), run("2026-01-02", ["jp"])] });
+  assert.equal(last!.newRatings, 2);
+  assert.deepEqual(last!.estimated, []);
+  assert.deepEqual(last!.failed, ["jp"]);
 });
 
 test("country filter and downloads line up per day", () => {

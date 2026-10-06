@@ -44,14 +44,16 @@ export type DayPoint = {
   ratings: number | null;
   /** Store average at the end of the day. */
   average: number | null;
-  /** Ratings added since the previous snapshot. */
+  /** Ratings added this day. A change spanning several days is shared out evenly across them. */
   newRatings: number | null;
   /** Average stars of those new ratings, worked out from the change in the store average. */
   newAverage: number | null;
   /** How many of the new ratings the average above is based on. */
   newAverageSample: number;
-  /** Days the new ratings span; above 1 when snapshots were missed before this day. */
-  covers: number;
+  /** Countries whose share for this day is estimated because a check failed. */
+  estimated: string[];
+  /** Whether part of this day's new ratings is an estimate for a missed snapshot. */
+  missedShare: boolean;
   snapshot: boolean;
   /** Countries that could not be checked this day. */
   failed: string[];
